@@ -29,6 +29,7 @@ replay_pid*
 .settings/
 target/
 src/main/resources/
+src/main/java/spring
 
 .project
 pom.xml

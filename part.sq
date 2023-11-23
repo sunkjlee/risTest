@@ -1,0 +1,177 @@
+add risman3
+
+/* tb_ca_api_log 파티셔닝 처리 - range partition */
+-- 최상위 부모 테이블 날리면 하위도 같이 날아감.
+DROP TABLE tb_ca_test_parent;
+
+CREATE TABLE tb_ca_test_paren____t(
+	call_id varchar(128) NOT NULL,
+	call_dt_ymd varchar(8) NOT NULL,
+	call_dt_hms varchar(6) NOT NULL,
+	csr_id varchar(16)  NULL,
+	csr_nm varchar(16) NULL,
+	custom_id varchar(16)  NULL,
+	voc_file_path varchar(255)  NULL,
+	voc_file_nm varchar(255) NULL,
+	enc_file_size varchar(255)  NULL,
+	dec_file_size varchar(255) NULL, 
+	dec_flag int4 NULL DEFAULT 0, 
+	svcnb varchar NULL , 
+	reg_date TIMESTAMP NOT NULL DEFAULT current_timestamp 
+)PARTITION BY RANGE (call_dt_ymd);  -- RANGE or LIST
+
+SELECT * FROM tb_ca_test_parent;
+--SELECT VERSION ;
+
+/*
+-- 1. 그냥 부모 테이블에 넣으면 들어가지 않는다. (파티셔닝 테이블을 만든 후에 들어간다. 
+*  근데 postger 가이드에서는 트리거 만들고 트리거 함수 만들어서 날자별로 파티셔닝 테이블에 
+* redirection하는 것을 수동으로 만들어 주는데 .. 기업버전이라 그런지 그냥 insert 때려도 자동으로 들어간다.
+* => 가 아니라 .. 부모 테이블로 넣어도 insert되고 이때 부보 , 자식 두군데 data가 들어 가는 형태인듯.
+*  ( 아래  SELECT tableoid::regclass,call_id, call_dt_ymd FROM tb_ca_test_parent 쿼리로 확인)
+*  근데 이걸 부모 테이블 제외 하고 실제 파티셔닝 테이블로 직접 redirect 하기위해 트리거를 만들어 사용 하는듯...
+*  근데 EnterpriseDB Advanced Server버전은 이렇게 insert하고 조회 해 봤더니 원하는 데로 
+*  파티셔닝 테이블에 각각 들어가 있다.
+* tableoid      |  call_id | call_dt_ymd
+* tb_ca_test_y2020m11	1	20201105
+  tb_ca_test_y2020m12	2	20201229
+* => 결과론 적으로 트리거를 만들 필요가 없을듯... select 만 신경써서 하며 될듯...
+*/
+INSERT INTO tb_ca_test_parent (call_id,  call_dt_ymd, call_dt_hms) values('1', '20201105', '1111');
+
+INSERT INTO tb_ca_test_parent (call_id,  call_dt_ymd, call_dt_hms) values('2', '20201229', '1111');
+
+-- 테이블 oid 조회 
+SELECT tableoid::regclass,call_id, call_dt_ymd FROM tb_ca_test_parent;
+
+
+SELECT tableoid::regclass,call_id, call_dt_ymd  FROM ONLY tb_ca_test_parent;
+
+
+-- 월 약 90,000,000 9천만 건 1억건....
+--CREATE TABLE tb_ca_test_y2020m11
+-- PARTITION OF tb_ca_api_log_test(
+--  -- 컬럼 constraint 지정 가능 ...(checkt등..
+-- )FOR VALUES FROM ('20201101') TO ('20201201')
+--;
+-----------------------------------------------
+/* 
+ * 무조건 ..하위 테이블 각 각 제약 조건을(index등) 추가 해야 함 .
+ * 상위 테이블에서 만들었다 해도 파티셔닝 테이블 만들때 상속 되지 않음. 
+ * (inherits 사용해도 동일)
+ * 
+ */
+--DROP TABLE tb_ca_test_y2020m11
+CREATE TABLE tb_ca_test_y2020m11  
+ PARTITION OF tb_ca_test_parent(
+   -- 하위 파티셔닝 테이블 생성 시 제약 조건 추가 가능 (부모에서는 pk생성 안됨)
+     PRIMARY KEY (call_id) 
+--    , CHECK (reg_date >= '2020-11-01 00:00:00' AND reg_date < '2020-12-01 00:00:00') 
+     ㅑㅜ
+ )
+FOR VALUES FROM ('20201101') TO ('20201130');
+--TABLESPACE fasttablespace;			-- table space 고려 해야 됨...
+SELECT * FROM tb_ca_test_y2020m11;
+
+--DROP TABLE tb_ca_test_y2020m11;
+--CREATE TABLE tb_ca_test_y2020m11  PARTITION OF tb_ca_test_parent
+--FOR VALUES FROM ('20201101') TO ('20201130');
+--
+--SELECT * FROM tb_ca_test_y2020m11;
+--DROP TABLE tb_ca_test_y2020m12;
+CREATE TABLE tb_ca_test_y2020m12
+PARTITION OF tb_ca_test_parent(
+	PRIMARY KEY (call_id) 
+--  , CHECK (reg_date >= '2020-12-01 00:00:00' AND reg_date < '2021-01-01 00:00:00')
+) 
+FOR VALUES FROM ('20201201') TO ('20201231');
+
+SELECT * FROM tb_ca_test_y2020m12;
+----------------------------------------------------------------------------------
+
+/* 
+ * insert - rediretion
+ * 트리거를 이용한 방색 -
+ *  : 성능이 중요한 경우 트리거 보다는 app 단에서 바로 파티셔닝 테이블로 구분해서 넣는게 최상
+ *    그렇지 못할경우 부득이  트리거 - 트리거 함수를 통해 세부 파티셔닝테이블로 insert
+ * 자료 입력 처리 시간을 최적화 해야하는 상황이라면,  각 하위 테이블에 자료를 각각 넣는 것이 제일 좋습니다. 이렇게 하려면, 응용 프로그램 차원에서 어느 테이블에 자료를 넣어야 할지를 결정해야한다. 
+ * 이런 요구 조건이 아니라, 조금은 늦어도 괜찮으니, 기존 응용 프로그램에서 입력 SQL 수정 없이 일반 테이블이 파티션 테이블로 바뀌는 경우는 
+ * 앞에서 설명한대로 INSERT 작업에 대한 입력 분기 처리를 하지 않으면, wwwlog 테이블에만 자료가 쌓이게 됩니다. 
+ * wwwlog 테이블에 자료를 입력하려고 한다면, 트리거가 그 자료의 실재로 저장되어야 할 하위 테이블을 결정해서 그 하위 테이블에 자료를 입력하고, 
+ * wwwlog 테이블에는 자료를 저장하지 않는 트리거가 필요합니다. 
+ * => 근데  EnterpriseDB Advanced Server버전은 트리거 없어도 parent 테이블이 아니 서브-파티셔닝 테이블에만 data저장됨
+ *  이게 일반 버전도 그런지는 테스트 못해봤음.
+*/
+--1. 트리거 생성 : 부모(메인 ) 테이블 insert시 트리거를 통해 파티셔닝 insert함수 call
+CREATE TRIGGER insert_tb_ca_test_trigger
+    BEFORE INSERT ON tb_ca_test_parent			--부모 테이블에는 data 입력안하고 입력전에 동작해야되므로  꼭 before
+    FOR EACH ROW EXECUTE PROCEDURE fn_ta_ca_test_insert_trigger();
+
+--2.파티셔닝 insert 함수 : 일자별로 파티셔닝 테이블에 insert
+CREATE OR REPLACE FUNCTION fn_ta_ca_test_insert_trigger()
+RETURNS TRIGGER AS $$
+BEGIN
+	/* 해당 일자별로 생성 - *가 아닌 세부 컬럼에대한 매핍 필요 */
+    IF ( NEW.call_dt_ymd >= DATE '20201101' AND
+         NEW.call_dt_ymd < DATE '20201130' ) THEN
+        INSERT INTO tb_ca_test_y2020m11 VALUES (NEW.*);			-- * 보다 개별 컬럼 지정 해야 할듯...
+    ELSIF ( NEW.call_dt_ymd >= DATE '20201201' AND
+            NEW.call_dt_ymd < DATE '20201231' ) THEN
+        INSERT INTO tb_ca_test_y2020m12 VALUES (NEW.*);
+     ----  2021
+    ELSIF ( NEW.call_dt_ymd >= DATE '20210101' AND
+            NEW.call_dt_ymd < DATE '20210131' ) THEN
+        INSERT INTO tb_ca_test_y2021m01 VALUES (NEW.*);
+    ELSIF ( NEW.call_dt_ymd >= DATE '20210201' AND
+            NEW.call_dt_ymd < DATE '20210228' ) THEN
+        INSERT INTO tb_ca_test_y2021m02 VALUES (NEW.*);
+	ELSIF ( NEW.call_dt_ymd >= DATE '20210301' AND
+            NEW.call_dt_ymd < DATE '20210331' ) THEN
+        INSERT INTO tb_ca_test_y2021m03 VALUES (NEW.*);
+    ELSIF ( NEW.call_dt_ymd >= DATE '20210401' AND
+            NEW.call_dt_ymd < DATE '20210430' ) THEN
+        INSERT INTO tb_ca_test_y2021m04 VALUES (NEW.*);
+    ELSIF ( NEW.call_dt_ymd >= DATE '20210501' AND
+            NEW.call_dt_ymd < DATE '20210531' ) THEN
+        INSERT INTO tb_ca_test_y2021m05 VALUES (NEW.*);
+    ELSE
+        RAISE EXCEPTION 'call_dt_ymd out of range.  Fix the fn_ta_ca_test_insert_trigger() function!';
+    END IF;
+    RETURN NULL;
+   
+END;
+$$
+LANGUAGE plpgsql;
+   
+   
+/*
+ * 유지관리
+ * 
+ */   
+/*
+ * 자주 선호되는 또 다른 옵션은 파티션을 나눈 테이블에서 파티션을 제거하지만 자체 권한으로 테이블에 대한 액세스를 유지하는 것입니다.
+ * 이를 통해 데이터가 삭제되기 전에 데이터에 대해 추가 작업을 수행 할 수 있습니다. 
+ * 예를 들어, 이 종종 사용하여 데이터를 백업 할 수있는 유용한 시간 COPY, pg_dump의 또는 유사한 도구를. 
+ * 데이터를 더 작은 형식으로 집계하거나 다른 데이터 조작을 수행하거나 보고서를 실행하는데도 유용 할 수 있습니다.
+*/
+-- detach 
+ALTER TABLE tb_ca_test_parent DETACH PARTITION tb_ca_test_y2020m12;
+
+CREATE TABLE measurement_y2008m02
+  (LIKE measurement INCLUDING DEFAULTS INCLUDING CONSTRAINTS)
+  TABLESPACE fasttablespace;
+
+ALTER TABLE measurement_y2008m02 ADD CONSTRAINT y2008m02
+   CHECK ( logdate >= DATE '2008-02-01' AND logdate < DATE '2008-03-01' );
+
+\copy measurement_y2008m02 from 'measurement_y2008m02'
+-- possibly some other data preparation work
+
+/*
+ * ATTACH PARTITION명령을 실행하기 전에 CHECK원하는 파티션 제약 조건과 일치하는 연결 테이블에 제약 조건 을 만드는 것이 좋습니다 . 
+ * 이렇게하면 시스템은 암시 적 파티션 제약 조건을 확인하기 위해 스캔을 건너 뛸 수 있습니다. 
+ * CHECK제약 조건이 없으면 ACCESS EXCLUSIVE부모 테이블에 대한 잠금 을 유지하면서 파티션 제약 조건의 유효성을 검사하기 위해 테이블을 스캔 합니다.
+ * 완료 CHECK후 중복 제약 조건 을 삭제하는 ATTACH PARTITION것이 좋습니다.
+*/
+ALTER TABLE measurement ATTACH PARTITION measurement_y2008m02
+    FOR VALUES FROM ('2008-02-01') TO ('2008-03-01' );
