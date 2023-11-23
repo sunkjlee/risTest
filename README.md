@@ -1,2 +1,0 @@
-# risTest
-ris Repository Test
