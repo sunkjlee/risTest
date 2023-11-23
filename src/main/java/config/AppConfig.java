@@ -1,4 +1,4 @@
-package config;  // git test - lkj branch , lkj2, lkj3 -> last Test
+package config;  // git test - lkj branch , lkj2, lkj3
 
 import java.beans.PropertyVetoException;
 
