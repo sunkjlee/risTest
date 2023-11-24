@@ -1,4 +1,4 @@
-package config;  // 11월24일lkj - mod1
+package config;  // 11월24일lkj - mod1, mod2
 
 import java.beans.PropertyVetoException;
 
