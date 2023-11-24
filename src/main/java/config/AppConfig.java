@@ -1,4 +1,4 @@
-//stg 수정 : mod1, mod2
+//stg 수정 : mod1, mod2git, mod3수정 
 package config;  // 11월24일lkj - mod1, mod2, mod3수정
 
 import java.beans.PropertyVetoException;
