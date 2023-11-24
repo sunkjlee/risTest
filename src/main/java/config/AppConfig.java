@@ -1,4 +1,4 @@
-package config;  // git test - lkj branch , lkj2, lkj3
+package config;  // git test - lkj branch , lkj2, lkj3 => 11월24일lkj
 
 import java.beans.PropertyVetoException;
 
